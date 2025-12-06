@@ -35,19 +35,20 @@ def main(
     configure_logging(settings.app)
 
     observability_settings = settings.observability
-    observability_enabled = observability_settings.enabled
-    tracing_enabled = enable_tracing if enable_tracing is not None else observability_enabled
-    metrics_enabled = enable_metrics if enable_metrics is not None else observability_enabled
+    observability_config = {
+        "tracing_enabled": observability_settings.enabled,
+        "metrics_enabled": observability_settings.enabled,
+        "service_name": observability_settings.service_name,
+        "exporter_endpoint": observability_settings.otlp_endpoint,
+        "sampling_ratio": observability_settings.sampling_ratio,
+    }
 
-    init_observability(
-        ObservabilityConfig(
-            tracing_enabled=tracing_enabled,
-            metrics_enabled=metrics_enabled,
-            service_name=observability_settings.service_name,
-            exporter_endpoint=observability_settings.otlp_endpoint,
-            sampling_ratio=observability_settings.sampling_ratio,
-        )
-    )
+    if enable_tracing is not None:
+        observability_config["tracing_enabled"] = enable_tracing
+    if enable_metrics is not None:
+        observability_config["metrics_enabled"] = enable_metrics
+
+    init_observability(ObservabilityConfig(**observability_config))
     ctx.obj = AppState(settings=settings)
 
 
