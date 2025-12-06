@@ -6,6 +6,7 @@ import asyncio
 from typing import Iterable
 
 from pubmed.adapters.http import EntrezClient
+from pubmed.config.settings import load_settings
 from pubmed.search.ingest import upsert_papers
 from pubmed.search.parser import parse_pubmed_xml
 
@@ -36,12 +37,16 @@ async def search_papers(
     raw_fetch = await client.efetch(pmids)
     records = parse_pubmed_xml(raw_fetch)
 
+    default_sources: tuple[str, ...] = ("pmc", "unpaywall")
+    if load_settings().app.enable_scihub:
+        default_sources += ("scihub",)
+
     if save_db:
         upsert_papers(
             records,
             raw_search=raw_search,
             raw_fetch=raw_fetch,
-            default_sources=("pmc", "unpaywall", "scihub"),
+            default_sources=default_sources,
         )
 
     return records

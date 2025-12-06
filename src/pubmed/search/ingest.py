@@ -112,11 +112,15 @@ def upsert_papers(
 ) -> None:
     """Upsert parsed records and store raw responses."""
 
+    settings = load_settings()
+
     engine = get_engine(db_url)
     init_db(engine)
     SessionLocal = sessionmaker(bind=engine, future=True)
 
     sources = list(default_sources) if default_sources else ["pmc"]
+    if not settings.app.enable_scihub:
+        sources = [source for source in sources if source != "scihub"]
 
     with SessionLocal() as session:  # type: Session
         _persist_logs(session, raw_search=raw_search, raw_fetch=raw_fetch)
