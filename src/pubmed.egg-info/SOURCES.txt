@@ -9,6 +9,9 @@ src/pubmed.egg-info/requires.txt
 src/pubmed.egg-info/top_level.txt
 src/pubmed/adapters/__init__.py
 src/pubmed/adapters/botasaurus/__init__.py
+src/pubmed/adapters/botasaurus/client.py
+src/pubmed/adapters/botasaurus/tasks_browser.py
+src/pubmed/adapters/botasaurus/tasks_request.py
 src/pubmed/adapters/http/__init__.py
 src/pubmed/adapters/http/client.py
 src/pubmed/adapters/http/entrez.py
