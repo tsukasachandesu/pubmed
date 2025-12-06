@@ -71,14 +71,16 @@ def _validate_pdf(content: bytes) -> None:
 
 
 @request_task()
-async def download_pdf_request(task: PdfRequestTask) -> PdfRequestResult:
+async def download_pdf_request(
+    task: PdfRequestTask, *, base_dir: str | Path | None = None
+) -> PdfRequestResult:
     """Download a PDF over HTTP and persist it to disk."""
 
     content, response = await _fetch_pdf(task)
     _validate_pdf(content)
 
     settings = load_settings().app
-    path = save_pdf(task.pmid, content, base_dir=settings.data_dir)
+    path = save_pdf(task.pmid, content, base_dir=base_dir or settings.data_dir)
 
     logger.info(
         "pdf downloaded",

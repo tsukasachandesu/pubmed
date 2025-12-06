@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Mapping
 
 import structlog
@@ -32,7 +33,9 @@ def _validate_pdf(content: bytes) -> None:
 
 
 @browser_task()
-async def download_pdf_browser(task: BrowserDownloadTask) -> PdfRequestResult:
+async def download_pdf_browser(
+    task: BrowserDownloadTask, *, base_dir: str | Path | None = None
+) -> PdfRequestResult:
     """Persist a PDF obtained via a browser automation session.
 
     The function intentionally avoids Botasaurus-specific types so it can be
@@ -47,7 +50,7 @@ async def download_pdf_browser(task: BrowserDownloadTask) -> PdfRequestResult:
     _validate_pdf(task.content)
 
     settings = load_settings().app
-    path = save_pdf(task.pmid, task.content, base_dir=settings.data_dir)
+    path = save_pdf(task.pmid, task.content, base_dir=base_dir or settings.data_dir)
 
     logger.info("browser pdf saved", pmid=task.pmid, url=task.url, path=str(path))
 

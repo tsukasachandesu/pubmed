@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass
 from datetime import datetime
+from pathlib import Path
 from typing import Awaitable, Callable, Iterable, Mapping, Sequence
 
 import structlog
@@ -17,7 +18,7 @@ from pubmed.search.ingest import Download, Paper, get_engine, init_db
 
 logger = structlog.get_logger(__name__)
 
-DownloadHandler = Callable[[str], Awaitable[PdfRequestResult | None]]
+DownloadHandler = Callable[[str, str | Path | None], Awaitable[PdfRequestResult | None]]
 
 
 @dataclass(slots=True)
@@ -53,7 +54,9 @@ def _collect_jobs(session_factory: sessionmaker, sources: Sequence[str]) -> list
     return jobs
 
 
-async def _run_job(session_factory: sessionmaker, job: DownloadJob) -> None:
+async def _run_job(
+    session_factory: sessionmaker, job: DownloadJob, base_dir: str | Path | None
+) -> None:
     handler = SOURCE_HANDLERS.get(job.source)
     if handler is None:
         logger.warning("no handler for source", source=job.source)
@@ -61,7 +64,7 @@ async def _run_job(session_factory: sessionmaker, job: DownloadJob) -> None:
         return
 
     try:
-        result = await handler(job.pmid)
+        result = await handler(job.pmid, base_dir)
     except Exception as exc:  # pragma: no cover - defensive logging
         logger.exception("download failed", pmid=job.pmid, source=job.source)
         _update_status(session_factory, job.download_id, "failed", error=str(exc))
@@ -114,6 +117,7 @@ async def download_pending(
     max_concurrency: int = 3,
     db_url: str | None = None,
     allow_scihub: bool = False,
+    base_dir: str | Path | None = None,
 ) -> list[DownloadJob]:
     """Download PDFs for pending entries from the configured sources."""
 
@@ -132,7 +136,7 @@ async def download_pending(
 
     async def runner(job: DownloadJob) -> None:
         async with semaphore:
-            await _run_job(session_factory, job)
+            await _run_job(session_factory, job, base_dir)
 
     await asyncio.gather(*(runner(job) for job in jobs))
     return jobs
@@ -144,6 +148,7 @@ def run_downloads_sync(
     max_concurrency: int = 3,
     db_url: str | None = None,
     allow_scihub: bool = False,
+    base_dir: str | Path | None = None,
 ) -> list[DownloadJob]:
     """Execute :func:`download_pending` synchronously for CLI use."""
 
@@ -153,5 +158,6 @@ def run_downloads_sync(
             max_concurrency=max_concurrency,
             db_url=db_url,
             allow_scihub=allow_scihub,
+            base_dir=base_dir,
         )
     )

@@ -58,5 +58,9 @@ src/pubmed/usecases/search/__init__.py
 src/pubmed/usecases/search/search_papers.py
 tests/test_cli.py
 tests/test_core_utils.py
+tests/test_download_placeholder.py
 tests/test_env_files.py
+tests/test_observability.py
+tests/test_parser.py
+tests/test_search_ingest.py
 tests/test_storage.py
