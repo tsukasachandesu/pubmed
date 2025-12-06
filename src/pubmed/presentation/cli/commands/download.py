@@ -21,6 +21,8 @@ def run(
     """Execute the download workflow for pending papers."""
 
     settings = getattr(ctx.obj, "settings", None)
+    if settings:
+        settings.app.data_dir = output
     scihub_allowed = bool(settings and settings.app.enable_scihub)
 
     if enable_scihub and not scihub_allowed:
