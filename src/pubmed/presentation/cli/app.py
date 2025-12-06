@@ -40,6 +40,8 @@ def main(
 
 app.add_typer(commands.search.app, name="search", help="Search and ingest PubMed metadata.")
 app.add_typer(commands.download.app, name="download", help="Download PDFs from multiple sources.")
+app.add_typer(commands.show.app, name="show", help="Inspect stored papers and downloads.")
+app.add_typer(commands.export.app, name="export", help="Export stored data to files.")
 app.add_typer(commands.config.app, name="config", help="Validate and inspect configuration.")
 app.add_typer(commands.doctor.app, name="doctor", help="Run consistency checks.")
 
