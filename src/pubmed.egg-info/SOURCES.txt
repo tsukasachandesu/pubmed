@@ -28,6 +28,12 @@ src/pubmed/core/types.py
 src/pubmed/core/utils.py
 src/pubmed/domain/__init__.py
 src/pubmed/download/__init__.py
+src/pubmed/download/workflow.py
+src/pubmed/download/sources/__init__.py
+src/pubmed/download/sources/pmc.py
+src/pubmed/download/sources/scihub.py
+src/pubmed/download/sources/unpaywall.py
+src/pubmed/download/sources/utils.py
 src/pubmed/maintenance/__init__.py
 src/pubmed/presentation/__init__.py
 src/pubmed/presentation/cli/__init__.py

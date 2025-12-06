@@ -1,10 +1,4 @@
-"""Lightweight helpers for working with Botasaurus tasks.
-
-The actual dependency on Botasaurus is optional so the project can be
-developed and tested without a browser runtime. When Botasaurus is not
-installed the decorators simply become passthrough wrappers, allowing the
-tasks to be executed like ordinary callables.
-"""
+"""Botasaurus adapter utilities and safe fallbacks."""
 
 from __future__ import annotations
 
@@ -76,11 +70,7 @@ def _passthrough_decorator(message: str) -> Callable[[F], F]:
 def request_task(
     config: BotasaurusConfig | None = None, **options: Any
 ) -> Callable[[F], F]:
-    """Return a decorator compatible with :func:`botasaurus.request`.
-
-    When Botasaurus is unavailable the returned decorator becomes a no-op so
-    the wrapped function can still be called directly.
-    """
+    """Return a decorator compatible with :func:`botasaurus.request`."""
 
     decorator = _maybe_get_decorator("request")
     cfg = config or BotasaurusConfig.from_settings()
@@ -95,11 +85,7 @@ def request_task(
 def browser_task(
     config: BotasaurusConfig | None = None, **options: Any
 ) -> Callable[[F], F]:
-    """Return a decorator compatible with :func:`botasaurus.browser`.
-
-    The decorator turns into a passthrough when Botasaurus cannot be imported
-    so the codebase remains usable in lightweight environments.
-    """
+    """Return a decorator compatible with :func:`botasaurus.browser`."""
 
     decorator = _maybe_get_decorator("browser")
     cfg = config or BotasaurusConfig.from_settings()

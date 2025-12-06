@@ -1,4 +1,4 @@
-"""Filesystem utilities for reading and writing paper assets."""
+"""Filesystem helpers for persisting PDFs and export artifacts."""
 
 from __future__ import annotations
 
@@ -10,11 +10,7 @@ from .paths import export_path, paper_pdf_path
 
 
 def atomic_write_bytes(target: Path, data: bytes) -> Path:
-    """Write ``data`` to ``target`` atomically.
-
-    The file is first written to a temporary location in the same directory and
-    then moved into place with :meth:`Path.replace`.
-    """
+    """Write ``data`` to ``target`` atomically."""
 
     target.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.NamedTemporaryFile(delete=False, dir=target.parent) as tmp:
@@ -40,10 +36,7 @@ def save_export(filename: str, content: bytes, *, base_dir: str | Path | None = 
 
 
 def read_bytes(path: Path) -> bytes:
-    """Read the bytes from ``path``.
-
-    Provided for symmetry with :func:`atomic_write_bytes`.
-    """
+    """Read the bytes from ``path``."""
 
     return path.read_bytes()
 

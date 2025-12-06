@@ -1,4 +1,4 @@
-"""Botasaurus ``@request`` tasks for lightweight HTTP PDF downloads."""
+"""Botasaurus-compatible request task for downloading PDFs over HTTP."""
 
 from __future__ import annotations
 
@@ -40,9 +40,20 @@ class PdfRequestResult:
 
 
 async def _fetch_pdf(task: PdfRequestTask) -> tuple[bytes, httpx.Response]:
-    headers = dict(task.headers or {})
-    async with httpx.AsyncClient(follow_redirects=True, timeout=30.0) as client:
-        response = await client.get(task.url, headers=headers)
+    settings = load_settings()
+    headers = {
+        "User-Agent": f"{settings.app.tool_name}/0.1 (+{settings.app.email or 'unknown'})",
+        **dict(task.headers or {}),
+    }
+    proxy = settings.botasaurus.proxy or settings.app.proxy_url
+
+    async with httpx.AsyncClient(
+        follow_redirects=True,
+        timeout=30.0,
+        proxies=str(proxy) if proxy else None,
+        headers=headers,
+    ) as client:
+        response = await client.get(task.url)
     response.raise_for_status()
     return response.content, response
 
@@ -54,11 +65,7 @@ def _validate_pdf(content: bytes) -> None:
 
 @request_task()
 async def download_pdf_request(task: PdfRequestTask) -> PdfRequestResult:
-    """Download a PDF over HTTP and persist it to disk.
-
-    The function is compatible with Botasaurus' ``@request`` decorator but can
-    also be invoked directly in environments without Botasaurus installed.
-    """
+    """Download a PDF over HTTP and persist it to disk."""
 
     content, response = await _fetch_pdf(task)
     _validate_pdf(content)

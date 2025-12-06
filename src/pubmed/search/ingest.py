@@ -1,13 +1,24 @@
-"""Persist parsed PubMed records into a local database."""
+"""Persistence helpers for search results and raw API payloads."""
 
 from __future__ import annotations
 
 from datetime import datetime
 from pathlib import Path
-from typing import Iterable
+from typing import Iterable, Sequence
 
-from sqlalchemy import JSON, Column, DateTime, Integer, String, Text, create_engine, select
-from sqlalchemy.orm import Session, declarative_base, sessionmaker
+from sqlalchemy import (
+    JSON,
+    Column,
+    DateTime,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+    create_engine,
+    select,
+)
+from sqlalchemy.orm import Session, declarative_base, relationship, sessionmaker
 
 from pubmed.config.settings import load_settings
 
@@ -15,6 +26,8 @@ Base = declarative_base()
 
 
 class Paper(Base):
+    """Minimal paper metadata extracted from PubMed."""
+
     __tablename__ = "papers"
 
     id = Column(Integer, primary_key=True)
@@ -25,8 +38,31 @@ class Paper(Base):
     publication_year = Column(Integer, nullable=True)
     raw_pubmed_xml = Column(Text, nullable=True)
 
+    downloads = relationship("Download", back_populates="paper", cascade="all, delete-orphan")
+
+
+class Download(Base):
+    """Represents a download attempt for a paper from a given source."""
+
+    __tablename__ = "downloads"
+    __table_args__ = (UniqueConstraint("paper_id", "source", name="uq_download_source"),)
+
+    id = Column(Integer, primary_key=True)
+    paper_id = Column(Integer, ForeignKey("papers.id"), nullable=False)
+    source = Column(String, nullable=False)
+    status = Column(String, default="pending", nullable=False)
+    error = Column(Text, nullable=True)
+    path = Column(Text, nullable=True)
+    attempted_at = Column(DateTime, nullable=True)
+    raw_http_headers = Column(JSON, nullable=True)
+    raw_http_meta = Column(JSON, nullable=True)
+
+    paper = relationship("Paper", back_populates="downloads")
+
 
 class ApiCallLog(Base):
+    """Raw API payloads for auditing and lossless storage."""
+
     __tablename__ = "api_call_logs"
 
     id = Column(Integer, primary_key=True)
@@ -59,6 +95,7 @@ def upsert_papers(
     raw_search: str | None = None,
     raw_fetch: str | None = None,
     db_url: str | None = None,
+    default_sources: Sequence[str] | None = None,
 ) -> None:
     """Upsert parsed records and store raw responses."""
 
@@ -66,10 +103,12 @@ def upsert_papers(
     init_db(engine)
     SessionLocal = sessionmaker(bind=engine, future=True)
 
+    sources = list(default_sources) if default_sources else ["pmc"]
+
     with SessionLocal() as session:  # type: Session
         _persist_logs(session, raw_search=raw_search, raw_fetch=raw_fetch)
         for record in records:
-            _merge_paper(session, record)
+            _merge_paper(session, record, sources)
         session.commit()
 
 
@@ -92,7 +131,7 @@ def _persist_logs(session: Session, *, raw_search: str | None, raw_fetch: str | 
         )
 
 
-def _merge_paper(session: Session, record: dict[str, object]) -> None:
+def _merge_paper(session: Session, record: dict[str, object], sources: Sequence[str]) -> None:
     pmid = record.get("pmid")
     if pmid is None:
         return
@@ -103,14 +142,35 @@ def _merge_paper(session: Session, record: dict[str, object]) -> None:
             value = record.get(field)
             if value is not None:
                 setattr(existing, field, value)
+        paper = existing
     else:
-        session.add(
-            Paper(
-                pmid=str(pmid),
-                doi=record.get("doi"),
-                title=record.get("title"),
-                journal=record.get("journal"),
-                publication_year=record.get("publication_year"),
-                raw_pubmed_xml=record.get("raw_pubmed_xml"),
-            )
+        paper = Paper(
+            pmid=str(pmid),
+            doi=record.get("doi"),
+            title=record.get("title"),
+            journal=record.get("journal"),
+            publication_year=record.get("publication_year"),
+            raw_pubmed_xml=record.get("raw_pubmed_xml"),
         )
+        session.add(paper)
+        session.flush()
+
+    _ensure_pending_downloads(session, paper, sources)
+
+
+def _ensure_pending_downloads(session: Session, paper: Paper, sources: Sequence[str]) -> None:
+    existing_sources = {
+        download.source
+        for download in session.execute(
+            select(Download).where(Download.paper_id == paper.id)
+        ).scalars()
+    }
+    for source in sources:
+        if source not in existing_sources:
+            session.add(
+                Download(
+                    paper_id=paper.id,
+                    source=source,
+                    status="pending",
+                )
+            )

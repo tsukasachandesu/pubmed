@@ -1,4 +1,4 @@
-"""Use case for searching PubMed and optionally persisting results."""
+"""Use case for searching PubMed and persisting results."""
 
 from __future__ import annotations
 
@@ -18,11 +18,7 @@ async def search_papers(
     maxdate: str | None = None,
     save_db: bool = False,
 ) -> list[dict[str, object]]:
-    """Search PubMed for ``term`` and return parsed records.
-
-    When ``save_db`` is True, the parsed records and raw API payloads are
-    persisted to the local database via :func:`~pubmed.search.ingest.upsert_papers`.
-    """
+    """Search PubMed for ``term`` and return parsed records."""
 
     client = EntrezClient()
     search_payload, raw_search = await client.esearch(
@@ -41,7 +37,12 @@ async def search_papers(
     records = parse_pubmed_xml(raw_fetch)
 
     if save_db:
-        upsert_papers(records, raw_search=raw_search, raw_fetch=raw_fetch)
+        upsert_papers(
+            records,
+            raw_search=raw_search,
+            raw_fetch=raw_fetch,
+            default_sources=("pmc", "unpaywall", "scihub"),
+        )
 
     return records
 
