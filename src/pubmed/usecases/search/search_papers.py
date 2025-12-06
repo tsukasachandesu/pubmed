@@ -47,7 +47,22 @@ async def search_papers(
     return records
 
 
-def run_search_sync(**kwargs: object) -> list[dict[str, object]]:
+def run_search_sync(
+    *,
+    term: str,
+    retmax: int = 20,
+    mindate: str | None = None,
+    maxdate: str | None = None,
+    save_db: bool = False,
+) -> list[dict[str, object]]:
     """Convenience wrapper to execute :func:`search_papers` synchronously."""
 
-    return asyncio.run(search_papers(**kwargs))
+    return asyncio.run(
+        search_papers(
+            term,
+            retmax=retmax,
+            mindate=mindate,
+            maxdate=maxdate,
+            save_db=save_db,
+        )
+    )

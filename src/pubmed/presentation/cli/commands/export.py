@@ -10,7 +10,7 @@ from sqlalchemy.orm import sessionmaker
 
 from pubmed.adapters.storage import save_export
 from pubmed.config.settings import load_settings
-from pubmed.search.ingest import Download, Paper, get_engine, init_db
+from pubmed.search.ingest import Paper, get_engine, init_db
 
 app = typer.Typer()
 

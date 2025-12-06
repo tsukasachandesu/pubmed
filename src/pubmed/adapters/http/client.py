@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
-from typing import AsyncIterator
+from typing import Any, AsyncIterator, cast
 
 import httpx
+from httpx import _types as httpx_types
+from tenacity import AsyncRetrying
 
 from pubmed.config.settings import load_settings
 from pubmed.core.types import RetryPolicy
@@ -20,9 +22,13 @@ def _default_client() -> httpx.AsyncClient:
 
     settings = load_settings().app
     timeout = DEFAULT_TIMEOUT
-    proxies = settings.proxy_url
+    proxy: httpx_types.ProxyTypes | None = (
+        cast(httpx_types.ProxyTypes, str(settings.proxy_url))
+        if settings.proxy_url
+        else None
+    )
     headers = {"User-Agent": f"{settings.tool_name}/0.1 (+{settings.email or 'unknown'})"}
-    return httpx.AsyncClient(timeout=timeout, proxies=proxies, headers=headers)
+    return httpx.AsyncClient(timeout=timeout, proxy=proxy, headers=headers)
 
 
 @asynccontextmanager
@@ -38,11 +44,14 @@ async def http_client(client: httpx.AsyncClient | None = None) -> AsyncIterator[
             await session.aclose()
 
 
-async def get_with_retry(url: str, *, retry_policy: RetryPolicy | None = None, **kwargs: object) -> httpx.Response:
+async def get_with_retry(
+    url: str, *, retry_policy: RetryPolicy | None = None, **kwargs: Any
+) -> httpx.Response:
     """Perform a GET request with tenacity-based retries."""
 
     policy = retry_policy or RetryPolicy()
-    async for attempt in build_retry(policy, is_async=True):
+    retry = cast(AsyncRetrying, build_retry(policy, is_async=True))
+    async for attempt in retry:
         with attempt:
             async with http_client() as client:
                 return await client.get(url, **kwargs)

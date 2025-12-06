@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 from functools import lru_cache
-from typing import Optional
+from typing import Literal, Optional, cast
 
 from pydantic import Field, HttpUrl, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+LogFormat = Literal["console", "json"]
 
 
 class AppSettings(BaseSettings):
@@ -21,7 +23,9 @@ class AppSettings(BaseSettings):
     data_dir: str = Field(default="data/papers", description="Directory to store downloaded PDFs")
 
     log_level: str = Field(default="INFO", description="Logging level (DEBUG, INFO, ...)")
-    log_format: str = Field(default="console", description="Logging output format (console/json)")
+    log_format: LogFormat = Field(
+        default="console", description="Logging output format (console/json)"
+    )
 
     enable_scihub: bool = Field(default=False, description="Allow Sci-Hub downloads")
 
@@ -34,11 +38,11 @@ class AppSettings(BaseSettings):
 
     @field_validator("log_format")
     @classmethod
-    def validate_log_format(cls, value: str) -> str:
+    def validate_log_format(cls, value: str) -> LogFormat:
         value_lower = value.lower()
         if value_lower not in {"console", "json"}:
             raise ValueError("log_format must be either 'console' or 'json'")
-        return value_lower
+        return cast(LogFormat, value_lower)
 
 
 class BotasaurusSettings(BaseSettings):

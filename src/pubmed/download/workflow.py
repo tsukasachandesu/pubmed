@@ -1,6 +1,6 @@
-from __future__ import annotations
-
 """Orchestrate PDF downloads across multiple sources."""
+
+from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
@@ -138,7 +138,20 @@ async def download_pending(
     return jobs
 
 
-def run_downloads_sync(**kwargs: object) -> list[DownloadJob]:
+def run_downloads_sync(
+    *,
+    sources: Sequence[str] | None = None,
+    max_concurrency: int = 3,
+    db_url: str | None = None,
+    allow_scihub: bool = False,
+) -> list[DownloadJob]:
     """Execute :func:`download_pending` synchronously for CLI use."""
 
-    return asyncio.run(download_pending(**kwargs))
+    return asyncio.run(
+        download_pending(
+            sources=sources,
+            max_concurrency=max_concurrency,
+            db_url=db_url,
+            allow_scihub=allow_scihub,
+        )
+    )

@@ -8,7 +8,6 @@ from typing import Iterable, Sequence
 
 from sqlalchemy import (
     JSON,
-    Column,
     DateTime,
     ForeignKey,
     Integer,
@@ -18,11 +17,21 @@ from sqlalchemy import (
     create_engine,
     select,
 )
-from sqlalchemy.orm import Session, declarative_base, relationship, sessionmaker
+from sqlalchemy.orm import (
+    DeclarativeBase,
+    Mapped,
+    Session,
+    mapped_column,
+    relationship,
+    sessionmaker,
+)
 
 from pubmed.config.settings import load_settings
 
-Base = declarative_base()
+
+class Base(DeclarativeBase):
+    """Base class for ORM models."""
+
 
 
 class Paper(Base):
@@ -30,15 +39,17 @@ class Paper(Base):
 
     __tablename__ = "papers"
 
-    id = Column(Integer, primary_key=True)
-    pmid = Column(String, unique=True, nullable=False)
-    doi = Column(String, unique=True, nullable=True)
-    title = Column(Text, nullable=True)
-    journal = Column(String, nullable=True)
-    publication_year = Column(Integer, nullable=True)
-    raw_pubmed_xml = Column(Text, nullable=True)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    pmid: Mapped[str] = mapped_column(String, unique=True, nullable=False)
+    doi: Mapped[str | None] = mapped_column(String, unique=True, nullable=True)
+    title: Mapped[str | None] = mapped_column(Text, nullable=True)
+    journal: Mapped[str | None] = mapped_column(String, nullable=True)
+    publication_year: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    raw_pubmed_xml: Mapped[str | None] = mapped_column(Text, nullable=True)
 
-    downloads = relationship("Download", back_populates="paper", cascade="all, delete-orphan")
+    downloads: Mapped[list["Download"]] = relationship(
+        "Download", back_populates="paper", cascade="all, delete-orphan"
+    )
 
 
 class Download(Base):
@@ -47,17 +58,19 @@ class Download(Base):
     __tablename__ = "downloads"
     __table_args__ = (UniqueConstraint("paper_id", "source", name="uq_download_source"),)
 
-    id = Column(Integer, primary_key=True)
-    paper_id = Column(Integer, ForeignKey("papers.id"), nullable=False)
-    source = Column(String, nullable=False)
-    status = Column(String, default="pending", nullable=False)
-    error = Column(Text, nullable=True)
-    path = Column(Text, nullable=True)
-    attempted_at = Column(DateTime, nullable=True)
-    raw_http_headers = Column(JSON, nullable=True)
-    raw_http_meta = Column(JSON, nullable=True)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    paper_id: Mapped[int] = mapped_column(Integer, ForeignKey("papers.id"), nullable=False)
+    source: Mapped[str] = mapped_column(String, nullable=False)
+    status: Mapped[str] = mapped_column(String, default="pending", nullable=False)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    path: Mapped[str | None] = mapped_column(Text, nullable=True)
+    attempted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    raw_http_headers: Mapped[dict[str, object] | None] = mapped_column(
+        JSON, nullable=True
+    )
+    raw_http_meta: Mapped[dict[str, object] | None] = mapped_column(JSON, nullable=True)
 
-    paper = relationship("Paper", back_populates="downloads")
+    paper: Mapped[Paper] = relationship("Paper", back_populates="downloads")
 
 
 class ApiCallLog(Base):
@@ -65,13 +78,13 @@ class ApiCallLog(Base):
 
     __tablename__ = "api_call_logs"
 
-    id = Column(Integer, primary_key=True)
-    service = Column(String, nullable=False)
-    endpoint = Column(String, nullable=False)
-    request_params = Column(JSON, nullable=True)
-    response_body = Column(Text, nullable=True)
-    status_code = Column(Integer, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    service: Mapped[str] = mapped_column(String, nullable=False)
+    endpoint: Mapped[str] = mapped_column(String, nullable=False)
+    request_params: Mapped[dict[str, object] | None] = mapped_column(JSON, nullable=True)
+    response_body: Mapped[str | None] = mapped_column(Text, nullable=True)
+    status_code: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
 
 
 def _default_db_url() -> str:

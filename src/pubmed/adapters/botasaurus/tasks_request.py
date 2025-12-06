@@ -1,13 +1,15 @@
-from __future__ import annotations
-
 """Botasaurus-compatible request task for downloading PDFs over HTTP."""
+
+from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Mapping
+from typing import Mapping, cast
 
 import httpx
 import structlog
+
+from httpx import _types as httpx_types
 
 from pubmed.adapters.storage.filesystem import save_pdf
 from pubmed.config.settings import load_settings
@@ -48,11 +50,14 @@ async def _fetch_pdf(task: PdfRequestTask) -> tuple[bytes, httpx.Response]:
         **dict(task.headers or {}),
     }
     proxy = settings.botasaurus.proxy or settings.app.proxy_url
+    proxy_config: httpx_types.ProxyTypes | None = (
+        cast(httpx_types.ProxyTypes, str(proxy)) if proxy else None
+    )
 
     async with httpx.AsyncClient(
         follow_redirects=True,
         timeout=30.0,
-        proxies=str(proxy) if proxy else None,
+        proxy=proxy_config,
         headers=headers,
     ) as client:
         response = await client.get(task.url)
