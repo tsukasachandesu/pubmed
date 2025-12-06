@@ -1,3 +1,25 @@
+Metadata-Version: 2.4
+Name: pubmed
+Version: 0.1.0
+Summary: CLI tool for PubMed search, metadata collection, and PDF downloads.
+Author: PubMed Team
+Requires-Python: >=3.11
+Description-Content-Type: text/markdown
+Requires-Dist: typer[all]>=0.12
+Requires-Dist: pydantic>=2.7
+Requires-Dist: pydantic-settings>=2.2
+Requires-Dist: httpx>=0.27
+Requires-Dist: anyio>=4.4
+Requires-Dist: sqlalchemy>=2.0
+Requires-Dist: alembic>=1.13
+Requires-Dist: tenacity>=8.2
+Requires-Dist: structlog>=24.1
+Provides-Extra: dev
+Requires-Dist: pytest>=8.2; extra == "dev"
+Requires-Dist: pytest-asyncio>=0.23; extra == "dev"
+Requires-Dist: ruff>=0.6; extra == "dev"
+Requires-Dist: mypy>=1.11; extra == "dev"
+
 # PubMed CLI
 
 PubMed CLI is a project template for searching PubMed, storing metadata, and downloading PDFs.
