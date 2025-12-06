@@ -2,8 +2,16 @@
 
 from __future__ import annotations
 
+import logging
 import xml.etree.ElementTree as ET
 from typing import Any
+
+
+class PubmedXmlParseError(Exception):
+    """Raised when a PubMed XML payload cannot be parsed."""
+
+
+logger = logging.getLogger(__name__)
 
 
 def _text(element: ET.Element | None) -> str | None:
@@ -13,7 +21,11 @@ def _text(element: ET.Element | None) -> str | None:
 def parse_pubmed_xml(xml: str) -> list[dict[str, Any]]:
     """Extract a minimal set of metadata fields from an EFetch XML payload."""
 
-    root = ET.fromstring(xml)
+    try:
+        root = ET.fromstring(xml)
+    except ET.ParseError as exc:
+        logger.error("Failed to parse PubMed XML response: %s", exc)
+        raise PubmedXmlParseError("Unable to parse PubMed XML response.") from exc
     articles = []
     for article in root.findall(".//PubmedArticle"):
         pmid = _text(article.find(".//PMID"))
