@@ -14,6 +14,10 @@ src/pubmed/config/__init__.py
 src/pubmed/config/logging.py
 src/pubmed/config/observability.py
 src/pubmed/config/settings.py
+src/pubmed/core/__init__.py
+src/pubmed/core/errors.py
+src/pubmed/core/types.py
+src/pubmed/core/utils.py
 src/pubmed/domain/__init__.py
 src/pubmed/download/__init__.py
 src/pubmed/maintenance/__init__.py
