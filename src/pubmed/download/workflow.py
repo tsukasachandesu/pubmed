@@ -1,11 +1,11 @@
-"""Orchestrate PDF downloads across multiple sources."""
-
 from __future__ import annotations
+
+"""Orchestrate PDF downloads across multiple sources."""
 
 import asyncio
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Awaitable, Callable, Iterable, Sequence
+from typing import Awaitable, Callable, Iterable, Mapping, Sequence
 
 import structlog
 from sqlalchemy import select
@@ -76,7 +76,12 @@ async def _run_job(session_factory: sessionmaker, job: DownloadJob) -> None:
         job.download_id,
         "succeeded",
         path=str(result.path),
-        meta={"status_code": result.status_code, "content_type": result.content_type},
+        meta={
+            "status_code": result.status_code,
+            "content_type": result.content_type,
+            "final_url": result.final_url,
+        },
+        headers=result.headers,
     )
 
 
@@ -87,7 +92,8 @@ def _update_status(
     *,
     error: str | None = None,
     path: str | None = None,
-    meta: dict[str, object] | None = None,
+    meta: Mapping[str, object] | None = None,
+    headers: Mapping[str, str] | None = None,
 ) -> None:
     with session_factory() as session:
         download = session.get(Download, download_id)
@@ -96,7 +102,8 @@ def _update_status(
         download.status = status
         download.error = error
         download.path = path
-        download.raw_http_meta = meta or download.raw_http_meta
+        download.raw_http_meta = dict(meta) if meta else download.raw_http_meta
+        download.raw_http_headers = dict(headers) if headers else download.raw_http_headers
         download.attempted_at = datetime.utcnow()
         session.commit()
 

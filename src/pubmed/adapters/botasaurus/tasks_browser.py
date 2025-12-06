@@ -57,6 +57,8 @@ async def download_pdf_browser(task: BrowserDownloadTask) -> PdfRequestResult:
         path=path,
         status_code=200,
         content_type="application/pdf",
+        headers=dict(task.headers or {}),
+        final_url=task.url,
     )
 
 

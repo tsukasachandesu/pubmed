@@ -1,6 +1,6 @@
-"""Botasaurus-compatible request task for downloading PDFs over HTTP."""
-
 from __future__ import annotations
+
+"""Botasaurus-compatible request task for downloading PDFs over HTTP."""
 
 from dataclasses import dataclass
 from pathlib import Path
@@ -37,6 +37,8 @@ class PdfRequestResult:
     path: Path
     status_code: int
     content_type: str | None
+    headers: Mapping[str, str]
+    final_url: str
 
 
 async def _fetch_pdf(task: PdfRequestTask) -> tuple[bytes, httpx.Response]:
@@ -87,6 +89,8 @@ async def download_pdf_request(task: PdfRequestTask) -> PdfRequestResult:
         path=path,
         status_code=response.status_code,
         content_type=response.headers.get("content-type"),
+        headers=dict(response.headers),
+        final_url=str(response.url),
     )
 
 

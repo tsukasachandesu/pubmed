@@ -1,6 +1,6 @@
-"""Botasaurus adapter utilities and safe fallbacks."""
-
 from __future__ import annotations
+
+"""Botasaurus adapter utilities and safe fallbacks."""
 
 from dataclasses import dataclass
 from typing import Any, Callable, TypeVar
