@@ -1,10 +1,32 @@
 from typer.testing import CliRunner
 
 from pubmed.presentation.cli.app import app
-from pubmed.config.settings import load_settings
+from pubmed.config.settings import AppSettings, Settings, load_settings
 from pubmed.search.parser import PubmedXmlParseError
 
 runner = CliRunner()
+
+
+def test_download_cli_uses_scihub_setting_when_flag_missing(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    settings = Settings(app=AppSettings(enable_scihub=True))
+
+    def fake_run_downloads_sync(*_: object, allow_scihub: bool, **__: object):
+        captured["allow_scihub"] = allow_scihub
+        return [{"id": 1}]
+
+    monkeypatch.setattr("pubmed.config.settings.load_settings", lambda: settings)
+    monkeypatch.setattr("pubmed.presentation.cli.app.load_settings", lambda: settings)
+    monkeypatch.setattr(
+        "pubmed.presentation.cli.commands.download.run_downloads_sync",
+        fake_run_downloads_sync,
+    )
+
+    result = runner.invoke(app, ["download", "run", "--sources", "pmc"])
+
+    assert result.exit_code == 0
+    assert captured["allow_scihub"] is True
 
 
 def test_cli_help() -> None:

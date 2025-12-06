@@ -15,7 +15,9 @@ def run(
     sources: str = typer.Option("pmc,unpaywall", help="Comma-separated download sources"),
     max_workers: int = typer.Option(2, help="Maximum concurrent downloads"),
     output: str = typer.Option("data/papers", help="Directory for downloaded PDFs"),
-    enable_scihub: bool = typer.Option(False, help="Allow Sci-Hub access when opted in"),
+    enable_scihub: bool | None = typer.Option(
+        None, help="Allow Sci-Hub access when opted in"
+    ),
     db_url: str | None = typer.Option(None, help="Override database connection URL"),
 ) -> None:
     """Execute the download workflow for pending papers."""
@@ -23,16 +25,18 @@ def run(
     settings = getattr(ctx.obj, "settings", None)
     scihub_allowed = bool(settings and settings.app.enable_scihub)
 
+    allow_scihub = enable_scihub if enable_scihub is not None else scihub_allowed
+
     if enable_scihub and not scihub_allowed:
         typer.echo("Sci-Hub is disabled in configuration; ignoring --enable-scihub.")
-        enable_scihub = False
+        allow_scihub = False
 
     selected_sources = [source.strip() for source in sources.split(",") if source.strip()]
     jobs = run_downloads_sync(
         sources=selected_sources,
         max_concurrency=max_workers,
         db_url=db_url,
-        allow_scihub=enable_scihub,
+        allow_scihub=allow_scihub,
         base_dir=output,
     )
 
