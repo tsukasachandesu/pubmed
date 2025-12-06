@@ -1,6 +1,7 @@
 from typer.testing import CliRunner
 
 from pubmed.presentation.cli.app import app
+from pubmed.search.parser import PubmedXmlParseError
 
 runner = CliRunner()
 
@@ -46,3 +47,17 @@ def test_config_set_botasaurus_updates_env(tmp_path) -> None:
     assert "BOTASAURUS_PROFILE=default" in contents
     assert "BOTASAURUS_MAX_BROWSERS=3" in contents
     assert "BOTASAURUS_PROXY=http://localhost:8080" in contents
+
+
+def test_search_cli_handles_parse_errors(monkeypatch) -> None:
+    def fake_run_search_sync(*_: object, **__: object):
+        raise PubmedXmlParseError("Failed to parse test payload")
+
+    monkeypatch.setattr(
+        "pubmed.presentation.cli.commands.search.run_search_sync", fake_run_search_sync
+    )
+
+    result = runner.invoke(app, ["search", "run", "test-query"])
+
+    assert result.exit_code == 1
+    assert "Failed to parse test payload" in result.output

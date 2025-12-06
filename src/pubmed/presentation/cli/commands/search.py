@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import typer
 
+from pubmed.search.parser import PubmedXmlParseError
 from pubmed.usecases.search import run_search_sync
 
 app = typer.Typer()
@@ -19,13 +20,17 @@ def run(
 ) -> None:
     """Execute the PubMed search workflow and display a summary."""
 
-    records = run_search_sync(
-        term=term,
-        retmax=retmax,
-        mindate=mindate,
-        maxdate=maxdate,
-        save_db=save_db,
-    )
+    try:
+        records = run_search_sync(
+            term=term,
+            retmax=retmax,
+            mindate=mindate,
+            maxdate=maxdate,
+            save_db=save_db,
+        )
+    except PubmedXmlParseError as exc:
+        typer.secho(str(exc), fg=typer.colors.RED)
+        raise typer.Exit(code=1) from exc
 
     if not records:
         typer.echo("No records found.")
