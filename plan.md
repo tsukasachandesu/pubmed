@@ -1,140 +1,334 @@
-# PubMed 検索・メタデータ収集・全文取得 実装計画
+# PubMed 検索・メタデータ収集・全文ダウンロード 実装計画
 
 参考: [scihub-cli](https://github.com/Oxidane-bot/scihub-cli), [botasaurus](https://github.com/omkarcloud/botasaurus)
 
+---
+
 ## 1. アーキテクチャ概要
-- **言語/ランタイム**: Python 3.11+。`uv` でのロック/インストールをデフォルトとし、`--frozen` で再現性を担保。
-- **アーキテクチャスタイル**: Clean Architecture + ヘキサゴナルを併用し、ドメイン（検索・論文・ダウンロード）を中心にポート/アダプタで疎結合化。同期/非同期の境界をユースケース層で明示し、非同期 I/O（HTTP/ファイル）を第一級として扱う。
-- **レイヤリング**:
-  - **Domain**: 取得/永続化/ダウンロードのポート定義、エンティティ（Paper, Author, Download）とサービス（ドメインルール）。
-  - **UseCase (Application)**: ドメインポートを組み合わせたユースケース（検索→パース→保存、全文ダウンロードパイプライン、CLI コマンド実装に依存しないジョブ）。
-  - **Interface/Adapter**: HTTP クライアント、DB 実装、ファイルシステム、CLI/REST/バッチエントリポイント。依存は Domain/UseCase のみに限定。
-  - **Infrastructure**: ロギング、設定、リトライ、キャッシュ、タスクスケジューラ（`anyio`/`asyncio` セマフォ）、オブザーバビリティ（OpenTelemetry ロガー/トレース/メトリクス）。
-- **横断的関心事**:
-  - リトライ/サーキットブレーカーを `tenacity` 互換の薄いラッパで統一。
-  - レートリミットはトークンバケット + 予測的ウェイト（NCBI レスポンスヘッダを考慮）。
-  - オブザーバビリティ: 構造化ログ（JSON/pretty）、トレース ID のコンテキスト伝搬、ダウンロード成功率/HTTP 4xx/5xx をメトリクス化。
-  - コンフィグは Pydantic Settings + `.env` で階層マージ。`config validate --strict` コマンドで検証可能にする。
-  - セキュリティ/コンプライアンス: Sci-Hub はフラグ必須 + 監査ログにソースを残す。PII を扱わないがファイル名/パスはエスケープし OS コマンドインジェクションを防ぐ。
-  - スケーラビリティ: ダウンロードワーカーはセマフォ + バックプレッシャー、キューイング（`asyncio.Queue`）でメモリフットプリントを制御。将来の分散化に備え、ワーカープールを抽象化。
 
-## 2. ディレクトリ/モジュール構成
-- `src/pubmed/`
-  - `settings.py`: Pydantic Settings。`.env` 読み込み、値の strict validation、`config validate` 用ヘルパ。
-  - `logging.py`: `logging.config.dictConfig` ベースの構造化ロガー。OpenTelemetry ハンドラ/Exporter を組み込み可能に。
-  - `adapters/` (Interface/Adapter)
-    - `http_client.py`: `httpx.AsyncClient` ファクトリ、UA/プロキシ/リトライ/サーキットブレーカー。`@asynccontextmanager` でクリーンアップ。
-    - `rate_limit.py`: NCBI/Unpaywall/Sci-Hub 用トークンバケットとレスポンスヘッダ連動のスリープ計算。
-    - `filesystem.py`: パス生成 (`data/papers/<pmid>.pdf`)、テンポラリ保存、チェックサム、アトミック move。
-    - `observability.py`: ログ・メトリクス・トレースの初期化。リクエストタグ/PMID/DOI を Span に付与。
-  - `domain/` (Domain)
-    - `entities.py`: Paper, Author, Journal, Download 等のドメインオブジェクト（不変値 + 検証）。
-    - `ports.py`: リポジトリ/外部 API/ストレージのインターフェイス定義。
-    - `services.py`: ビジネスルール（保存時のユニークキー優先順位、ダウンロード許可判定、再試行方針）。
-  - `infrastructure/`
-    - `db/`
-      - `models.py`: SQLAlchemy ORM/Core モデル。Alembic migration 用設定ファイルも同居。
-      - `session.py`: エンジン/セッション生成、`get_session()`、同期/非同期両対応のフック。
-      - `repositories.py`: ドメイン `ports` に準拠した実装。upsert、バルクインサート、衝突解決。
-    - `cache.py`: `diskcache`/`sqlite` ベースの簡易キャッシュ。Entrez の WebEnv/QueryKey を短期保持。
-  - `search/`
-    - `entrez_client.py`: E-utilities (ESearch/EFetch/ELink) クライアント。`retstart` ページング、`usehistory` 対応、`http_client` を注入。
-    - `normalizer.py`: EFetch XML/Medline から DOI/PMCID/タイトル/著者/抄録/ジャーナルを抽出しスキーマ化。
-    - `usecase.py`: 検索→パース→保存を一貫実行。結果をドメインサービスに渡し永続化。
-  - `ingest/`
-    - `usecase.py`: メタデータ保存フロー。Paper/Author の upsert、Download 初期レコード作成、エラーハンドリングを集約。
-  - `download/`
-    - `sources/`
-      - `pmc.py`: PMCID→PDF URL 抽出（PMC API/OAI-PMH）。
-      - `unpaywall.py`: DOI→OA 情報取得。`best_oa_location` 優先、PDF ダイレクトリンクを返す。
-      - `scihub.py`: ミラー ローテーション + iframe/embed 解析。Captcha/HTML 失敗検知。`--enable-scihub` ガード。
-    - `strategy.py`: 優先度付きフォールバック（PMC → Unpaywall → Sci-Hub）。各試行の結果を Download ログに記録。
-    - `pipeline.py`: 非同期ダウンロードワーカー。セマフォ + バックプレッシャー、テンポラリ保存→検証→コミットを一元管理。
-  - `workflow.py`: PMID リスト入力で検索→永続化→全文取得を統合。ジョブ単位のリトライと観測情報を付与。
-  - `cli.py`: Typer ベース CLI。`search`/`ingest`/`download`/`show`/`export`/`config validate` を提供。DI で UseCase を注入。
-- `tests/`
-  - `unit/` と `integration/` に分離。respx/pytest-httpx、SQLite in-memory、CliRunner を活用。
-  - `fixtures/` にテスト用 XML/PDF サンプルを保持。
+- 言語/ランタイム  
+  - Python 3.11+。パッケージ管理と実行は `uv` を前提とし、`uv sync --frozen` でロックファイルに基づく再現性を確保。
 
-## 3. データモデル詳細 (SQLAlchemy)
-- **永続化方針**
-  - API から取得したメタデータ/全文 URL/ダウンロード結果は欠落なく全件データベースに保存し、フィルタリングやトリミングは保存後のクエリで行う。
-  - ORM を基本としつつ、バルク/アップサートは Core を併用。セッションは「リクエスト/CLI コマンド単位」で scope し、非同期は `async_sessionmaker` で別管理。トランザクション境界はユースケース層で開始し、リポジトリはセッション注入型にする。
-  - Alembic は単一ブランチ運用 + `revision --autogenerate` を必ずレビュー。命名規約 `YYYYMMDD_hhmmss_<summary>`。
-  - SQLite/PostgreSQL 両対応。外部キー ON/OFF や `ON DELETE` ポリシーの差異を Alembic スクリプトに明示（基本は RESTRICT、`Download.paper_id` は CASCADE）。
+- アーキテクチャスタイル  
+  - Clean Architecture + ヘキサゴナル (Ports & Adapters)。  
+  - 中心にドメイン (`Paper`, `Download`, `ApiCallLog` 等)、外側に UseCase 層、さらに外側に各種アダプタ (DB, HTTP, Botasaurus, CLI, FS)。
 
-**テーブル/制約**
-- `Paper`: `pmid`(PK, uniq), `pmcid`, `doi`, `title`, `abstract`, `journal`, `year`, `volume`, `issue`, `pages`, `url`, `is_oa`, `created_at`, `updated_at` (UTC, `updated_at` は SQLAlchemy イベントで自動更新)。
-- `Author`: `id`(PK), `name`, `affiliation`。
-- `Journal`: `id`(PK), `name`, `issn`。
-- `PaperAuthor`: `paper_id`, `author_id`, `order`。`(paper_id, order)` にユニーク制約（1 始まりの順序を保証）。
-- `Download`: `id`, `paper_id`, `source`(pmc/unpaywall/scihub), `url`, `status`(pending/success/failed/skipped), `path`, `checksum`, `error`(TEXT, 長さ上限 2k 目安), `attempted_at`(timezone-aware)。`Download.paper_id + source` をユニーク。
-- `doi`/`pmcid` の重複防止: Postgres はパーシャルユニーク (`WHERE doi IS NOT NULL`) を検討、SQLite は CHECK + 複合 UNIQUE を採用。
+- データベース / ORM  
+  - 本番 DB は PostgreSQL 16 (JSONB, GIN インデックス利用)。ローカル開発では SQLite も許容。  
+  - ORM/DB ツールキットは SQLAlchemy 2.x (Core + ORM) + Alembic。必要なら SQLModel を併用して型安全性と DX を向上。
 
-**インデックス/検索性**
-- `pmid`/`doi`/`pmcid` にユニークインデックス。`Download` は `(paper_id, source)` でユニーク + `status` へのカバリングインデックス。
-- タイトル/抄録に対する全文検索は将来オプションとして FTS5(GIN) を検討（現段階では未実装と明記）。
+- HTTP / スクレイピングレイヤ  
+  - API 呼び出し (Entrez/E-utilities, Unpaywall など) には `httpx.AsyncClient`。  
+  - 論文 PDF のダウンロードには **Botasaurus** を利用し、`@request` で軽量 HTTP、`@browser` で Cloudflare 等を突破するブラウザ自動化を行う。
 
-**テスト/シード**
-- Alembic マイグレーションは CI で `alembic upgrade head` を実行し、SQLite in-memory で upsert/ユニーク制約/外部キーの回帰を検証。
-- 小規模サンプル（数件の Paper/Download）を seed fixture として用意し、ダウンロード履歴の整合性テストに利用。
+- 非同期化方針  
+  - HTTP/ファイル/DB I/O は `async` / `await` を第一級とし、`anyio` のタスクグループで構造化並列処理。  
+  - CPU バウンド処理 (重いパースや検証) は必要に応じてスレッド/プロセスプールにオフロード。
+
+- 横断的関心事  
+  - リトライ/サーキットブレーカー: `tenacity` 互換ラッパで統一、ポリシーは設定で切り替え。  
+  - レートリミット: トークンバケット + 予測スリープ。NCBI 推奨値 (API key 有無で 3/10 req/sec) と `Retry-After` ヘッダを厳密に尊重。  
+  - オブザーバビリティ: 構造化ログ (JSON/pretty 切替)、OpenTelemetry ベースのトレース＆メトリクス、主要メトリクス (成功/失敗件数、HTTP 4xx/5xx、ダウンロード成功率) の自動収集。  
+  - コンフィグ管理: Pydantic Settings (v2) + `.env` + 環境変数 + CLI オプションの多層マージ。`pubmed config validate --strict` コマンドで検証。  
+  - セキュリティ/コンプライアンス:
+    - Sci-Hub 利用はデフォルト無効。`--enable-scihub` かつ設定で明示 opt-in された場合のみ許可。  
+    - ファイルパス/外部コマンドは必ずエスケープして OS コマンドインジェクションを防止。  
+    - API key やメールアドレスなどのシークレットは環境変数/シークレットストア経由で注入し、ログには出さない。
+
+---
+
+## 2. DB/ORM 選定と方針
+
+- 要件  
+  - PubMed / Unpaywall / Sci-Hub 等の API レスポンスを **欠落なく (lossless)** 保存できること。  
+  - よく使うフィールドは正規化テーブルとして高速にクエリ可能。  
+  - スキーマ進化・マイグレーションが容易で、長期運用に耐えられること。  
+  - 並列ダウンロードやバルク upsert に耐える性能とトランザクション制御を持つこと。
+
+- 方針  
+  - DB: PostgreSQL (JSONB, GIN インデックス) を本番標準とし、開発/テスト用途には SQLite も利用可。  
+  - ORM: SQLAlchemy 2.x + Alembic。  
+  - 生レスポンスは JSONB/TEXT の `raw_*` カラムと `ApiCallLog` テーブルに保存し、正規化カラムはクエリ用に最小限抽出する二層構造。
+
+---
+
+## 3. データモデルと Lossless 保存
+
+- 主なエンティティ
+  - `Paper`  
+    - pmid, pmcid, doi, title, journal, year, volume, issue, pages, language, keywords など。  
+    - `raw_pubmed_xml`: PubMed EFetch XML 全体 (TEXT)。  
+    - `raw_pubmed_json`: 将来 API v3 など JSON レスポンス全体 (JSONB)。  
+    - `raw_unpaywall_json`: Unpaywall レスポンス全体 (JSONB)。
+  - `Author` / `PaperAuthor`  
+    - 著者情報と Paper との多対多 + 順序。
+  - `Download`  
+    - paper_id, source (pmc/unpaywall/scihub/other), status (pending/succeeded/failed/skipped)、error、attempted_at、checksum、file_size 等。  
+    - `raw_http_headers` (JSONB), `raw_http_meta` (JSONB: status_code, final_url, redirect_chain など)。
+  - `ApiCallLog`  
+    - service, endpoint, request_params, response_body, status_code, headers, created_at 等。  
+    - すべての外部 API 呼び出しをここに lossless 保存。
+
+- 制約・インデックス  
+  - `Paper`: (pmid), (doi) にユニーク制約 (NULL 可)。  
+  - `Download`: (paper_id, source) にユニーク制約。  
+  - `ApiCallLog`: service, created_at, status_code などにインデックス。  
+  - よく使う検索軸 (year, journal, created_at) にインデックス。
+
+---
 
 ## 4. メタデータ取得フロー
-1) **検索 (ESearch)**: `term`, `retmax`, `retstart`, `mindate`, `maxdate`, `sort` を受け取り PMID リスト取得。大量件数は `usehistory=y` + `WebEnv`/`QueryKey` でページング。
-2) **詳細取得 (EFetch)**: PMID バッチを XML で取得。`parser.py` で DOI/PMCID/PMID/タイトル/著者/抄録/ジャーナル/出版年を抽出。
-3) **永続化**: `ingest.py` でトランザクション upsert。既存 DOI/PMID があれば更新、無ければ挿入。`Download` は `status=pending` で初期化。
-4) **整合性**: 不正値（DOI 無しなど）は `status=skipped` で Download をマークし後続ダウンロードから除外。
 
-## 5. 全文ダウンロード戦略
-- **優先順位**: PMC → Unpaywall → Sci-Hub。Download レコードに全試行を履歴化。
-- **共通ポリシー**
-  - タイムアウト/指数バックオフリトライ（HTTP 5xx/429）。
-  - UA ローテーション + オプションのプロキシ（botasaurus/scihub-cli 由来の戦略を反映）。
-  - コンテンツ検証: PDF MIME/先頭バイトチェック、サイズ下限チェック。
-  - 保存時はテンポラリ → チェックサム計算 → アトミック move。`Download.status`/`error`/`attempted_at` を更新。
+1. 検索 (ESearch)  
+   - 入力: `term`, `retmax`, `retstart`, `mindate`, `maxdate`, `sort` など。  
+   - `usehistory=y` を指定し、`WebEnv` / `query_key` によるサーバ側ヒストリを利用。  
+   - `tool` / `email` / `api_key` を必ず付与。  
+   - レスポンス全文を `ApiCallLog` に保存。
 
-### PMC
-- PMCID から `pmc.py` が OAI-PMH/PMC API を呼び PDF URL を抽出。
-- 403/404/非 OA の場合は `Download.status=failed` 理由を記録し Unpaywall へフォールバック。
+2. 詳細取得 (EFetch)  
+   - PMID バッチ (例: 200 件) ごとに XML を取得。  
+   - 生 XML を `ApiCallLog` と `Paper.raw_pubmed_xml` に保存。  
+   - `search/parser.py` で DOI / PMCID / タイトル / 著者 / ジャーナル / 年などを抽出。
 
-### Unpaywall
-- DOI をキーに `https://api.unpaywall.org/v2/{doi}?email=` を呼び、`best_oa_location` を優先。
-- PDF 直リンクでない場合はスキップ理由を記録し Sci-Hub に移行。
+3. 永続化 (ingest)  
+   - `search/ingest.py` で Paper / Author / Download をトランザクション内で upsert。  
+   - 新規論文には `Download(status=pending)` を作成。  
+   - 未マッピングのフィールドも raw_* に存在するので、スキーマ拡張時に再抽出可能。
 
-### Sci-Hub
-- DOI/URL をミラーへ送信。HTML 応答なら `<iframe>`/`<embed>` の `src` を抽出。
-- Captcha/認証ページ検知で別ミラー/プロキシにローテート。既知ミラーの健全性チェックを起動時に実施可能。
-- 法的リスク回避のため CLI フラグ `--enable-scihub` が無ければ実行しない。
+4. 整合性チェック  
+   - 不正値や欠損値を検出したら Download を `skipped` / `failed` に変更し、`error` に理由を保存。  
+   - `pubmed doctor` コマンドで raw_* と正規化カラムの整合性 (例: DOI の一致) を検査。
 
-## 6. CLI 仕様 (Typer)
-- `pubmed search "cancer genomics" --retmax 200 --mindate 2020/01/01 --save-db`
-- `pubmed download --sources pmc,unpaywall --max-workers 4 --output data/papers --enable-scihub`
-- `pubmed show <pmid>`: DB からメタデータ/ダウンロード履歴を表示。
-- `pubmed export --format csv/json --output exports/papers.csv`
+---
 
-## 7. 設定/環境変数
-- `PUBMED_API_KEY`: NCBI API key（推奨、Rate Limit 緩和）。
-- `UNPAYWALL_EMAIL`: Unpaywall API 用メール（必須）。
-- `PROXY_URL`: Sci-Hub/Unpaywall 用プロキシ（任意）。
-- `DATA_DIR`: PDF 保存先。未指定時は `data/papers`。
-- `LOG_LEVEL`, `LOG_FORMAT`: json/text 切替。
+## 5. 全文ダウンロード戦略 (Botasaurus 利用)
 
-## 8. テスト戦略
-- HTTP コールは `respx`/`pytest-httpx` でモック、タイムアウト/リトライ/フォールバックの分岐を網羅。
-- DB は SQLite インメモリ + フィクスチャでセットアップ。upsert/ユニーク制約/リレーションを検証。
-- CLI は `CliRunner` でサブコマンド別に E2E 風テスト。
-- ダウンローダは小さな PDF モックで MIME/チェックサム/エラー処理を確認。
+- 優先順位  
+  - **PMC → Unpaywall → Sci-Hub → その他 (publisher 直)** の順で試行。
 
-## 9. 開発フェーズとマイルストーン
-1) プロジェクト雛形 (`src`/`pyproject`/`uv.lock`/`cli` エントリ)。logging/config/util を先行整備。
-2) 検索スタック: `entrez_client` + `parser` + `ingest`（DB upsert まで）。基本 CLI `search` を提供。
-3) ダウンロードスタック: PMC/Unpaywall/Sci-Hub 各 downloader + `fallback` 統合。`workflow` で非同期ダウンロード。
-4) CLI 拡充: `download`/`show`/`export`、設定ロード、`--enable-scihub` フラグ。
-5) テスト強化 & CI: `pytest` + フォーマッタ/リンタ（`ruff`, `mypy` 任意）。サンプル `.env.example` と README 更新。
+- 共通ポリシー (Botasaurus ベース)
+  - Botasaurus の `@request` / `@browser` デコレータでダウンロードタスクを定義。  
+  - `max_retry`, `retry_wait`, `cache`, `run_async` 等を使って堅牢性とスループットを両立。  
+  - PDF バリデーション: Content-Type, 先頭バイト, 最小サイズ。  
+  - 書き込みフロー: テンポラリ → チェックサム計算 → アトミック move。  
+  - すべての HTTP 応答は `Download.raw_http_headers` / `raw_http_meta` に保存。
 
-## 10. リスクと対策
-- Sci-Hub: 法的リスク → デフォルト無効 + 明示 opt-in、モジュール単体で無効化可能にする。
-- レートリミット: `rate_limit.py` で API key 有/無を考慮し sleep を挿入。`Retry-After` ヘッダ尊重。
-- ミラー死活監視: Sci-Hub ミラー一覧を設定で複数持ち、起動時ヘルスチェック。
-- データ品質: DOI/PMCID 欠落時は `Download.status=skipped`。タイトル/著者欠落をログで通知。
-- ストレージ: 衝突防止のため `<pmid>.pdf` 形式 + チェックサム。冪等な再ダウンロードをサポート。
+- PMC  
+  - PMCID から OA PDF URL を取得 (API / OAI-PMH)。  
+  - `adapters.botassaurus.tasks_request` 経由で PDF を取得し、検証・保存。  
+  - 403/404/ライセンス NG の場合は `failed` として Unpaywall にフォールバック。
+
+- Unpaywall  
+  - DOI から `best_oa_location` を取得。  
+  - 直リンクなら `@request` でダウンロード。HTML 経由でしか取得できない場合は `@browser` で解決。  
+  - レートリミット/メールアドレス要件を遵守。
+
+- Sci-Hub  
+  - デフォルト無効。`--enable-scihub` + 設定で明示 opt-in された場合のみ有効。  
+  - `@browser` でページを開き、`<iframe>` / `<embed>` の `src` 等から PDF URL を抽出。  
+  - ミラーを複数管理し、起動時のヘルスチェックにより死活監視。Captcha/ログイン検知時はミラーを切り替え。
+
+---
+
+## 6. ディレクトリ / モジュール構成 (細かいモジュール化)
+
+- `src/pubmed/`
+  - `__init__.py`
+
+  - `core/` … 共通基盤
+    - `__init__.py`
+    - `errors.py` … 共通例外。
+    - `types.py` … 型エイリアス、共通 dataclass。
+    - `utils.py` … 汎用ユーティリティ (slug 化、再試行ヘルパなど)。
+
+  - `config/` … 設定・ロギング・オブザーバビリティ
+    - `__init__.py`
+    - `settings.py` … Pydantic Settings による設定定義と読み込み。
+    - `logging.py` … `logging.config.dictConfig` ベースの構成。
+    - `observability.py` … OpenTelemetry / メトリクス初期化。
+
+  - `adapters/` … 外部システムとの接続
+    - `__init__.py`
+
+    - `http/`
+      - `__init__.py`
+      - `client.py` … 共通 `httpx.AsyncClient` ファクトリ (再利用可能なセッション)。  
+      - `entrez.py` … PubMed E-utilities (ESearch/EFetch/ELink) 用クライアント。  
+      - `unpaywall.py` … Unpaywall API クライアント。  
+      - `scihub.py` … Sci-Hub ミラーのヘルスチェックなどに使う HTTP クライアント。  
+      - `rate_limit.py` … サービス別レートリミット実装。
+
+    - `storage/`
+      - `__init__.py`
+      - `filesystem.py` … PDF/エクスポートファイルの I/O。  
+      - `paths.py` … `data/papers/<pmid>.pdf` 等のパス/ディレクトリ設計。
+
+    - `db/`
+      - `__init__.py`
+      - `session.py` … エンジン/セッション生成、接続設定。  
+      - `models.py` … SQLAlchemy モデル定義。  
+      - `repositories/`
+        - `__init__.py`
+        - `papers.py` … Paper/Author/PaperAuthor 用リポジトリ。  
+        - `downloads.py` … Download 用リポジトリ。  
+        - `api_logs.py` … ApiCallLog 用リポジトリ。
+
+    - `botasaurus/`
+      - `__init__.py`
+      - `client.py` … Botasaurus の共通設定 (プロファイル/プロキシ/キャッシュ) を管理。  
+      - `tasks_request.py` … `@request` ベースの PDF ダウンロードタスク群。  
+      - `tasks_browser.py` … `@browser` ベースの URL 解決/ダウンロードタスク群。  
+      - `profiles.py` … プロファイル名、プロキシ設定などの定義。
+
+    - `cli/`
+      - `__init__.py`
+      - `app.py` … Typer アプリの定義。  
+      - `io.py` … CLI 入出力 (色付き表示、確認プロンプト等) のヘルパ。
+
+  - `domain/` … ドメインモデル
+    - `__init__.py`
+
+    - `paper/`
+      - `__init__.py`
+      - `entities.py` … Paper エンティティ。  
+      - `value_objects.py` … PMID/DOI/PMCID 等の値オブジェクト。  
+      - `services.py` … 論文に関するドメインロジック (重複判定など)。
+
+    - `author/`
+      - `__init__.py`
+      - `entities.py` … Author, PaperAuthor 等。
+
+    - `download/`
+      - `__init__.py`
+      - `entities.py` … Download エンティティ。  
+      - `policies.py` … ダウンロード優先順位/再試行ポリシー。
+
+    - `api_log/`
+      - `__init__.py`
+      - `entities.py` … ApiCallLog エンティティ。
+
+  - `usecases/` … アプリケーションサービス
+    - `__init__.py`
+
+    - `search/`
+      - `__init__.py`
+      - `search_papers.py` … Term から PubMed 検索 → 取得 → 保存のユースケース。
+
+    - `download/`
+      - `__init__.py`
+      - `download_papers.py` … 未ダウンロード論文をキューから取り出してダウンロード。  
+      - `sync_status.py` … ファイル存在チェックと Download.status の同期。
+
+    - `maintenance/`
+      - `__init__.py`
+      - `run_doctor.py` … 整合性チェック実行。  
+      - `validate_config.py` … 設定検証ユースケース。
+
+  - `search/` … メタデータ取得用の低レベル処理
+    - `__init__.py`
+    - `parser.py` … PubMed XML/Medline のパース。  
+    - `ingest.py` … パース結果を domain/infrastructure にブリッジし、DB に upsert。
+
+  - `download/` … ダウンロードフロー
+    - `__init__.py`
+    - `workflow.py` … キュー/ワーカー管理、Botasaurus タスクの呼び出し。  
+    - `sources/`
+      - `__init__.py`
+      - `pmc.py` … PMC 用ダウンロードロジック。  
+      - `unpaywall.py` … Unpaywall 用ダウンロードロジック。  
+      - `scihub.py` … Sci-Hub 用ダウンロードロジック。
+
+  - `presentation/cli/` … CLI プレゼンテーション層
+    - `__init__.py`
+    - `app.py` … エントリポイント (`pubmed` コマンド)。  
+    - `commands/`
+      - `search.py`
+      - `download.py`
+      - `show.py`
+      - `export.py`
+      - `config.py`
+      - `doctor.py`
+
+---
+
+## 7. CLI 仕様 (Typer)
+
+- コマンド例
+  - `pubmed search "cancer genomics" --retmax 200 --mindate 2020/01/01 --save-db`
+  - `pubmed download --sources pmc,unpaywall --max-workers 4 --output data/papers --enable-scihub`
+  - `pubmed show <pmid>` … DB のメタデータとダウンロード履歴を表示。
+  - `pubmed export --format csv --output exports/papers.csv`
+  - `pubmed config validate --strict`
+  - `pubmed doctor`
+
+- UX ポリシー
+  - すべてのコマンドで `--dry-run` サポート。  
+  - 主要オプションは環境変数 (例: `PUBMED_DEFAULT_SOURCES`) で上書き可能。  
+  - ログレベル/フォーマットは `--log-level` / `--log-format` で指定。
+
+---
+
+## 8. 設定と環境変数
+
+- `PUBMED_API_KEY` … NCBI API key。  
+- `PUBMED_TOOL_NAME`, `PUBMED_EMAIL` … NCBI に対するツール識別子と連絡先。  
+- `UNPAYWALL_EMAIL` … Unpaywall API 用メールアドレス。  
+- `PROXY_URL` … Sci-Hub / Unpaywall / PMC 用プロキシ。  
+- `DATA_DIR` … PDF 保存ディレクトリ (デフォルト `data/papers`)。  
+- `LOG_LEVEL`, `LOG_FORMAT` … ログ出力設定。  
+- Botasaurus 関連:
+  - `BOTASAURUS_PROFILE` … 使用するブラウザプロファイル名。  
+  - `BOTASAURUS_MAX_BROWSERS` … 同時ブラウザ数の上限。  
+  - `BOTASAURUS_PROXY` … Botasaurus 用プロキシ設定。
+- `.env.example` … 必要なキー/推奨値を列挙したサンプルを用意。
+
+---
+
+## 9. テスト戦略・品質保証
+
+- Lossless 保存の検証  
+  - 代表的な EFetch / Unpaywall レスポンスサンプルを fixture 化し、保存された `raw_*` カラムと元レスポンスがバイトレベルで一致することを確認。  
+  - 正規化カラムを増やしても raw_* の内容は変更しない (追記のみ) 方針。
+
+- Botasaurus 統合のテスト  
+  - `adapters.botasaurus.tasks_request` / `tasks_browser` のタスクは HTTP レイヤをモックした単体テストを書く。  
+  - 実ブラウザを用いる E2E テストは少数 (代表的な 1〜2 ケース) に絞る。
+
+- DB テスト  
+  - SQLite インメモリ DB でスキーマ・制約・upsert ロジックを検証。  
+  - CI で PostgreSQL コンテナを起動し、本番同等スキーマでもテストを実行。
+
+- CLI テスト  
+  - Typer の `CliRunner` で各コマンド (`search` / `download` / `show` / `export` / `doctor`) を E2E 風にテスト。
+
+- 静的解析と CI  
+  - `ruff` でフォーマット + Lint、`mypy` で型チェック (厳しすぎないが一貫した設定)。  
+  - GitHub Actions で `uv` を用いた依存キャッシュつきワークフローを構築し、テスト/Lint/型チェックを自動実行。
+
+---
+
+## 10. 開発フェーズとマイルストーン
+
+1. プロジェクト雛形  
+   - `pyproject.toml` / `uv.lock` / `src` / `tests` / `presentation/cli` 雛形を作成。  
+   - `config.settings` / `config.logging` / `config.observability` の最小実装。
+
+2. 検索スタック  
+   - `adapters.http.client` / `adapters.http.entrez` / `search.parser` / `search.ingest` を実装し、DB への upsert と raw_* 保存まで完了。  
+   - `usecases.search.search_papers` と CLI `search` コマンドを実装。
+
+3. ダウンロードスタック (Botasaurus 統合)  
+   - `adapters.botasaurus.client` / `tasks_request` / `tasks_browser` を実装し、共通 PDF ダウンロードタスクを定義。  
+   - `download.workflow` と `download.sources.(pmc|unpaywall|scihub)` を実装し、未ダウンロード論文の並列ダウンロードを実現。  
+   - Download + raw_http_* の保存とステータス更新ロジックを完成させる。
+
+4. CLI 拡張  
+   - `presentation.cli.commands.(download|show|export|config|doctor)` を実装。  
+   - `usecases.maintenance.run_doctor` / `validate_config` と連携。  
+   - Sci-Hub の opt-in フラグや Botasaurus 関連設定を CLI から操作できるようにする。
+
+5. テスト強化 & ドキュメント  
+   - `pytest` + `ruff` + `mypy` のカバレッジを拡充。  
+   - `.env.example` / README を更新し、Lossless 保存方針・Botasaurus 利用方針・ディレクトリ構成を明記。  
+   - 必要に応じてアーキテクチャ図やシーケンス図を追加。
+
