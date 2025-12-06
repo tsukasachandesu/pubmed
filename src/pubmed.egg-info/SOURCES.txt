@@ -19,6 +19,7 @@ src/pubmed/adapters/storage/__init__.py
 src/pubmed/adapters/storage/filesystem.py
 src/pubmed/adapters/storage/paths.py
 src/pubmed/config/__init__.py
+src/pubmed/config/env_files.py
 src/pubmed/config/logging.py
 src/pubmed/config/observability.py
 src/pubmed/config/settings.py
@@ -42,13 +43,17 @@ src/pubmed/presentation/cli/commands/__init__.py
 src/pubmed/presentation/cli/commands/config.py
 src/pubmed/presentation/cli/commands/doctor.py
 src/pubmed/presentation/cli/commands/download.py
+src/pubmed/presentation/cli/commands/export.py
 src/pubmed/presentation/cli/commands/search.py
+src/pubmed/presentation/cli/commands/show.py
 src/pubmed/search/__init__.py
 src/pubmed/search/ingest.py
 src/pubmed/search/parser.py
 src/pubmed/usecases/__init__.py
 src/pubmed/usecases/download/__init__.py
 src/pubmed/usecases/maintenance/__init__.py
+src/pubmed/usecases/maintenance/run_doctor.py
+src/pubmed/usecases/maintenance/validate_config.py
 src/pubmed/usecases/search/__init__.py
 src/pubmed/usecases/search/search_papers.py
 tests/test_cli.py
