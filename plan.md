@@ -3,38 +3,58 @@
 参考: [scihub-cli](https://github.com/Oxidane-bot/scihub-cli), [botasaurus](https://github.com/omkarcloud/botasaurus)
 
 ## 1. アーキテクチャ概要
-- **言語/ランタイム**: Python 3.11+。標準で `uv` を推奨（高速インストール/ロック）。
-- **プロジェクト構造**: `src` 配下に機能別モジュールを明確分離。`tests` でユニット/統合テストを保持。
-- **設計原則**:
-  - コアロジックを「検索」「永続化」「ダウンロード」「CLI」の 4 層に分離。
-  - 依存方向は下位（infra/utils）→上位（アプリ）へ単方向にする。
-  - I/O（HTTP/DB/FS）はポート・アダプタパターンを採用しテスト容易性を確保。
+- **言語/ランタイム**: Python 3.11+。`uv` でのロック/インストールをデフォルトとし、`--frozen` で再現性を担保。
+- **アーキテクチャスタイル**: Clean Architecture + ヘキサゴナルを併用し、ドメイン（検索・論文・ダウンロード）を中心にポート/アダプタで疎結合化。同期/非同期の境界をユースケース層で明示し、非同期 I/O（HTTP/ファイル）を第一級として扱う。
+- **レイヤリング**:
+  - **Domain**: 取得/永続化/ダウンロードのポート定義、エンティティ（Paper, Author, Download）とサービス（ドメインルール）。
+  - **UseCase (Application)**: ドメインポートを組み合わせたユースケース（検索→パース→保存、全文ダウンロードパイプライン、CLI コマンド実装に依存しないジョブ）。
+  - **Interface/Adapter**: HTTP クライアント、DB 実装、ファイルシステム、CLI/REST/バッチエントリポイント。依存は Domain/UseCase のみに限定。
+  - **Infrastructure**: ロギング、設定、リトライ、キャッシュ、タスクスケジューラ（`anyio`/`asyncio` セマフォ）、オブザーバビリティ（OpenTelemetry ロガー/トレース/メトリクス）。
+- **横断的関心事**:
+  - リトライ/サーキットブレーカーを `tenacity` 互換の薄いラッパで統一。
+  - レートリミットはトークンバケット + 予測的ウェイト（NCBI レスポンスヘッダを考慮）。
+  - オブザーバビリティ: 構造化ログ（JSON/pretty）、トレース ID のコンテキスト伝搬、ダウンロード成功率/HTTP 4xx/5xx をメトリクス化。
+  - コンフィグは Pydantic Settings + `.env` で階層マージ。`config validate --strict` コマンドで検証可能にする。
+  - セキュリティ/コンプライアンス: Sci-Hub はフラグ必須 + 監査ログにソースを残す。PII を扱わないがファイル名/パスはエスケープし OS コマンドインジェクションを防ぐ。
+  - スケーラビリティ: ダウンロードワーカーはセマフォ + バックプレッシャー、キューイング（`asyncio.Queue`）でメモリフットプリントを制御。将来の分散化に備え、ワーカープールを抽象化。
 
-## 2. ディレクトリ/モジュール構成
+## 2. ディレクトリ/モジュール構成（細分化）
 - `src/pubmed/`
-  - `config.py`: `.env`/環境変数読み込み + Pydantic 設定モデル。API キーやプロキシ、キャッシュ TTL を定義。
-  - `logging.py`: `logging.config.dictConfig` を使った統一ロガー。JSON ログと人間可読ログを切り替え。
-  - `utils/`
-    - `http.py`: `httpx.AsyncClient` を使ったセッション生成、UA/プロキシ/リトライポリシー（指数バックオフ）。
-    - `rate_limit.py`: NCBI レートリミット（API key 有/無で切替）と Sci-Hub アクセス間隔管理。
-    - `parsing.py`: HTML/PDF URL 抽出、日付/ID 正規化。
-    - `fs.py`: パス生成 (`data/papers/<pmid>.pdf`)、チェックサム計算、テンポラリ保存。
-  - `models.py`: SQLAlchemy Core/ORM モデル（Paper, Author, Journal, Download, PaperAuthor）。スキーママイグレーションのため Alembic 設定を想定。
-  - `database.py`: エンジン/Session 管理、`get_session()` コンテキスト、SQLite/PostgreSQL 切替。
-  - `schemas.py`: Pydantic スキーマ（外部 API レスポンス/CLI 入力検証）。
+  - `settings.py`: Pydantic Settings。`.env` 読み込み、値の strict validation、`config validate` 用ヘルパ。
+  - `logging.py`: `logging.config.dictConfig` ベースの構造化ロガー。OpenTelemetry ハンドラ/Exporter を組み込み可能に。
+  - `adapters/` (Interface/Adapter)
+    - `http_client.py`: `httpx.AsyncClient` ファクトリ、UA/プロキシ/リトライ/サーキットブレーカー。`@asynccontextmanager` でクリーンアップ。
+    - `rate_limit.py`: NCBI/Unpaywall/Sci-Hub 用トークンバケットとレスポンスヘッダ連動のスリープ計算。
+    - `filesystem.py`: パス生成 (`data/papers/<pmid>.pdf`)、テンポラリ保存、チェックサム、アトミック move。
+    - `observability.py`: ログ・メトリクス・トレースの初期化。リクエストタグ/PMID/DOI を Span に付与。
+  - `domain/` (Domain)
+    - `entities.py`: Paper, Author, Journal, Download 等のドメインオブジェクト（不変値 + 検証）。
+    - `ports.py`: リポジトリ/外部 API/ストレージのインターフェイス定義。
+    - `services.py`: ビジネスルール（保存時のユニークキー優先順位、ダウンロード許可判定、再試行方針）。
+  - `infrastructure/`
+    - `db/`
+      - `models.py`: SQLAlchemy ORM/Core モデル。Alembic migration 用設定ファイルも同居。
+      - `session.py`: エンジン/セッション生成、`get_session()`、同期/非同期両対応のフック。
+      - `repositories.py`: ドメイン `ports` に準拠した実装。upsert、バルクインサート、衝突解決。
+    - `cache.py`: `diskcache`/`sqlite` ベースの簡易キャッシュ。Entrez の WebEnv/QueryKey を短期保持。
   - `search/`
-    - `entrez_client.py`: E-utilities (ESearch/EFetch/ELink) 呼び出しクライアント。`httpx` ベース、`retstart` ページング、`WebEnv`/`QueryKey` によるバッチ取得対応。
-    - `parser.py`: EFetch XML/Medline から DOI/PMCID/タイトル/著者/抄録を抽出。
-    - `service.py`: 検索→詳細取得→スキーマ化を orchestrate。
-  - `ingest.py`: メタデータ保存フロー。Paper/Author の upsert、Download 初期レコード作成。
-  - `downloaders/`
-    - `pmc.py`: PMCID から PDF URL を取得（PMC API/OAI-PMH）、`httpx` でダウンロード。
-    - `unpaywall.py`: DOI で OA 情報取得。`best_oa_location` 優先。PDF 直接 URL を返す。
-    - `scihub.py`: 複数ミラーのローテーション、フォーム送信/iframe 解析、Captcha/HTML 失敗検知。`--enable-scihub` フラグ必須。
-    - `fallback.py`: 優先度付きの戦略（PMC → Unpaywall → Sci-Hub）。例外を握りつぶさず理由を Download レコードへ記録。
-  - `workflow.py`: PMID リストを入力にメタデータ取得 + 全文ダウンロードを非同期キュー（`asyncio.gather` + セマフォ）で実施。再試行ポリシーを集中管理。
-  - `cli.py`: Typer ベース CLI。`search`/`ingest`/`download`/`show`/`export` コマンドを提供。
-- `tests/`: respx で HTTP モック、SQLite in-memory で DB テスト、Typer `CliRunner` で CLI テスト。
+    - `entrez_client.py`: E-utilities (ESearch/EFetch/ELink) クライアント。`retstart` ページング、`usehistory` 対応、`http_client` を注入。
+    - `normalizer.py`: EFetch XML/Medline から DOI/PMCID/タイトル/著者/抄録/ジャーナルを抽出しスキーマ化。
+    - `usecase.py`: 検索→パース→保存を一貫実行。結果をドメインサービスに渡し永続化。
+  - `ingest/`
+    - `usecase.py`: メタデータ保存フロー。Paper/Author の upsert、Download 初期レコード作成、エラーハンドリングを集約。
+  - `download/`
+    - `sources/`
+      - `pmc.py`: PMCID→PDF URL 抽出（PMC API/OAI-PMH）。
+      - `unpaywall.py`: DOI→OA 情報取得。`best_oa_location` 優先、PDF ダイレクトリンクを返す。
+      - `scihub.py`: ミラー ローテーション + iframe/embed 解析。Captcha/HTML 失敗検知。`--enable-scihub` ガード。
+    - `strategy.py`: 優先度付きフォールバック（PMC → Unpaywall → Sci-Hub）。各試行の結果を Download ログに記録。
+    - `pipeline.py`: 非同期ダウンロードワーカー。セマフォ + バックプレッシャー、テンポラリ保存→検証→コミットを一元管理。
+  - `workflow.py`: PMID リスト入力で検索→永続化→全文取得を統合。ジョブ単位のリトライと観測情報を付与。
+  - `cli.py`: Typer ベース CLI。`search`/`ingest`/`download`/`show`/`export`/`config validate` を提供。DI で UseCase を注入。
+- `tests/`
+  - `unit/` と `integration/` に分離。respx/pytest-httpx、SQLite in-memory、CliRunner を活用。
+  - `fixtures/` にテスト用 XML/PDF サンプルを保持。
 
 ## 3. データモデル詳細 (SQLAlchemy)
 - `Paper`: `pmid`(PK, uniq), `pmcid`, `doi`, `title`, `abstract`, `journal`, `year`, `volume`, `issue`, `pages`, `url`, `is_oa`, `created_at`, `updated_at`。
