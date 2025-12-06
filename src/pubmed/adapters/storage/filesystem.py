@@ -17,7 +17,11 @@ def atomic_write_bytes(target: Path, data: bytes) -> Path:
         tmp.write(data)
         temp_path = Path(tmp.name)
 
-    temp_path.replace(target)
+    try:
+        temp_path.replace(target)
+    finally:
+        if temp_path.exists():
+            temp_path.unlink()
     return target
 
 
