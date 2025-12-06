@@ -7,6 +7,7 @@ import json
 import typer
 
 from pubmed.config.settings import load_settings
+from pubmed.usecases.maintenance import validate_config
 
 app = typer.Typer()
 
@@ -24,6 +25,9 @@ def validate(strict: bool = typer.Option(False, help="Fail on missing optional s
     """Validate configuration fields are present."""
 
     settings = load_settings()
-    if strict and not settings.app.email:
-        raise typer.Exit(code=1, message="PUBMED_EMAIL is required in strict mode")
+    issues = validate_config(settings, strict=strict)
+    if issues:
+        for issue in issues:
+            typer.echo(f"- {issue}")
+        raise typer.Exit(code=1)
     typer.echo("Configuration validated")
