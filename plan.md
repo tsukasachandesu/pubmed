@@ -1,4 +1,4 @@
-# PubMed 検索・メタデータ収集・全文取得 実装計画（改訂版）
+# PubMed 検索・メタデータ収集・全文取得 実装計画
 
 参考: [scihub-cli](https://github.com/Oxidane-bot/scihub-cli), [botasaurus](https://github.com/omkarcloud/botasaurus)
 
@@ -18,7 +18,7 @@
   - セキュリティ/コンプライアンス: Sci-Hub はフラグ必須 + 監査ログにソースを残す。PII を扱わないがファイル名/パスはエスケープし OS コマンドインジェクションを防ぐ。
   - スケーラビリティ: ダウンロードワーカーはセマフォ + バックプレッシャー、キューイング（`asyncio.Queue`）でメモリフットプリントを制御。将来の分散化に備え、ワーカープールを抽象化。
 
-## 2. ディレクトリ/モジュール構成（細分化）
+## 2. ディレクトリ/モジュール構成
 - `src/pubmed/`
   - `settings.py`: Pydantic Settings。`.env` 読み込み、値の strict validation、`config validate` 用ヘルパ。
   - `logging.py`: `logging.config.dictConfig` ベースの構造化ロガー。OpenTelemetry ハンドラ/Exporter を組み込み可能に。
