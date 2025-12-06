@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import pytest
+
 from pubmed.adapters.storage.filesystem import (
     atomic_write_bytes,
     save_export,
@@ -59,3 +61,20 @@ def test_atomic_write_bytes_replaces_existing(tmp_path: Path) -> None:
     atomic_write_bytes(target, b"new")
 
     assert target.read_bytes() == b"new"
+
+
+def test_atomic_write_bytes_cleans_temp_on_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    target = tmp_path / "file.bin"
+    existing_files = set(target.parent.iterdir())
+
+    def boom(self: Path, target: Path):
+        raise RuntimeError("replace failed")
+
+    monkeypatch.setattr(Path, "replace", boom, raising=True)
+
+    with pytest.raises(RuntimeError, match="replace failed"):
+        atomic_write_bytes(target, b"data")
+
+    assert set(target.parent.iterdir()) == existing_files
