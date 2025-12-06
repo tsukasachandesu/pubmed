@@ -10,6 +10,11 @@ src/pubmed.egg-info/top_level.txt
 src/pubmed/adapters/__init__.py
 src/pubmed/adapters/botasaurus/__init__.py
 src/pubmed/adapters/http/__init__.py
+src/pubmed/adapters/http/client.py
+src/pubmed/adapters/http/entrez.py
+src/pubmed/adapters/storage/__init__.py
+src/pubmed/adapters/storage/filesystem.py
+src/pubmed/adapters/storage/paths.py
 src/pubmed/config/__init__.py
 src/pubmed/config/logging.py
 src/pubmed/config/observability.py
@@ -30,8 +35,11 @@ src/pubmed/presentation/cli/commands/doctor.py
 src/pubmed/presentation/cli/commands/download.py
 src/pubmed/presentation/cli/commands/search.py
 src/pubmed/search/__init__.py
+src/pubmed/search/ingest.py
+src/pubmed/search/parser.py
 src/pubmed/usecases/__init__.py
 src/pubmed/usecases/download/__init__.py
 src/pubmed/usecases/maintenance/__init__.py
 src/pubmed/usecases/search/__init__.py
 tests/test_cli.py
+tests/test_storage.py
