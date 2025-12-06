@@ -1,6 +1,7 @@
 from typer.testing import CliRunner
 
 from pubmed.presentation.cli.app import app
+from pubmed.config.settings import load_settings
 from pubmed.search.parser import PubmedXmlParseError
 
 runner = CliRunner()
@@ -61,3 +62,34 @@ def test_search_cli_handles_parse_errors(monkeypatch) -> None:
 
     assert result.exit_code == 1
     assert "Failed to parse test payload" in result.output
+
+
+def test_cli_uses_observability_settings_when_flags_missing(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    monkeypatch.setattr("pubmed.presentation.cli.app.configure_logging", lambda *_: None)
+
+    def fake_init(config: object) -> None:
+        captured["config"] = config
+
+    monkeypatch.setattr("pubmed.presentation.cli.app.init_observability", fake_init)
+
+    load_settings.cache_clear()
+    monkeypatch.setenv("OBS_ENABLED", "true")
+    monkeypatch.setenv("OBS_SERVICE_NAME", "cli-service")
+    monkeypatch.setenv("OBS_OTLP_ENDPOINT", "http://collector")
+    monkeypatch.setenv("OBS_SAMPLING_RATIO", "0.25")
+
+    try:
+        result = runner.invoke(app, ["config", "show"])
+    finally:
+        load_settings.cache_clear()
+
+    assert result.exit_code == 0
+    config = captured["config"]
+
+    assert config.tracing_enabled is True
+    assert config.metrics_enabled is True
+    assert config.service_name == "cli-service"
+    assert config.exporter_endpoint == "http://collector"
+    assert config.sampling_ratio == 0.25
