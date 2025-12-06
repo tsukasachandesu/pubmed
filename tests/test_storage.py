@@ -1,13 +1,11 @@
 from pathlib import Path
 
-from pubmed.adapters.storage import (
+from pubmed.adapters.storage.filesystem import (
     atomic_write_bytes,
-    export_path,
-    paper_pdf_path,
-    paper_stem,
     save_export,
     save_pdf,
 )
+from pubmed.adapters.storage.paths import export_path, paper_pdf_path, paper_stem
 
 
 def test_paper_pdf_path_respects_base_dir(tmp_path: Path) -> None:
