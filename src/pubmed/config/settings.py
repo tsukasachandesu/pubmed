@@ -76,9 +76,9 @@ class ObservabilitySettings(BaseSettings):
 class Settings(BaseSettings):
     """Aggregate application settings."""
 
-    app: AppSettings = AppSettings()
-    botasaurus: BotasaurusSettings = BotasaurusSettings()
-    observability: ObservabilitySettings = ObservabilitySettings()
+    app: AppSettings = Field(default_factory=AppSettings)
+    botasaurus: BotasaurusSettings = Field(default_factory=BotasaurusSettings)
+    observability: ObservabilitySettings = Field(default_factory=ObservabilitySettings)
 
     model_config = SettingsConfigDict(extra="ignore")
 
@@ -87,4 +87,8 @@ class Settings(BaseSettings):
 def load_settings() -> Settings:
     """Load settings eagerly so CLI commands can share configuration."""
 
-    return Settings()
+    return Settings(
+        app=AppSettings(),
+        botasaurus=BotasaurusSettings(),
+        observability=ObservabilitySettings(),
+    )
