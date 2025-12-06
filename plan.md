@@ -57,12 +57,26 @@
   - `fixtures/` にテスト用 XML/PDF サンプルを保持。
 
 ## 3. データモデル詳細 (SQLAlchemy)
-- `Paper`: `pmid`(PK, uniq), `pmcid`, `doi`, `title`, `abstract`, `journal`, `year`, `volume`, `issue`, `pages`, `url`, `is_oa`, `created_at`, `updated_at`。
+**永続化方針**
+- ORM を基本としつつ、バルク/アップサートは Core を併用。セッションは「リクエスト/CLI コマンド単位」で scope し、非同期は `async_sessionmaker` で別管理。トランザクション境界はユースケース層で開始し、リポジトリはセッション注入型にする。
+- Alembic は単一ブランチ運用 + `revision --autogenerate` を必ずレビュー。命名規約 `YYYYMMDD_hhmmss_<summary>`。
+- SQLite/PostgreSQL 両対応。外部キー ON/OFF や `ON DELETE` ポリシーの差異を Alembic スクリプトに明示（基本は RESTRICT、`Download.paper_id` は CASCADE）。
+
+**テーブル/制約**
+- `Paper`: `pmid`(PK, uniq), `pmcid`, `doi`, `title`, `abstract`, `journal`, `year`, `volume`, `issue`, `pages`, `url`, `is_oa`, `created_at`, `updated_at` (UTC, `updated_at` は SQLAlchemy イベントで自動更新)。
 - `Author`: `id`(PK), `name`, `affiliation`。
 - `Journal`: `id`(PK), `name`, `issn`。
-- `PaperAuthor`: `paper_id`, `author_id`, `order`。
-- `Download`: `id`, `paper_id`, `source`(pmc/unpaywall/scihub), `url`, `status`(pending/success/failed/skipped), `path`, `checksum`, `error`, `attempted_at`。
-- インデックス: `pmid`/`doi`/`pmcid` のユニーク制約。`Download.paper_id + source` でユニーク。
+- `PaperAuthor`: `paper_id`, `author_id`, `order`。`(paper_id, order)` にユニーク制約（1 始まりの順序を保証）。
+- `Download`: `id`, `paper_id`, `source`(pmc/unpaywall/scihub), `url`, `status`(pending/success/failed/skipped), `path`, `checksum`, `error`(TEXT, 長さ上限 2k 目安), `attempted_at`(timezone-aware)。`Download.paper_id + source` をユニーク。
+- `doi`/`pmcid` の重複防止: Postgres はパーシャルユニーク (`WHERE doi IS NOT NULL`) を検討、SQLite は CHECK + 複合 UNIQUE を採用。
+
+**インデックス/検索性**
+- `pmid`/`doi`/`pmcid` にユニークインデックス。`Download` は `(paper_id, source)` でユニーク + `status` へのカバリングインデックス。
+- タイトル/抄録に対する全文検索は将来オプションとして FTS5(GIN) を検討（現段階では未実装と明記）。
+
+**テスト/シード**
+- Alembic マイグレーションは CI で `alembic upgrade head` を実行し、SQLite in-memory で upsert/ユニーク制約/外部キーの回帰を検証。
+- 小規模サンプル（数件の Paper/Download）を seed fixture として用意し、ダウンロード履歴の整合性テストに利用。
 
 ## 4. メタデータ取得フロー
 1) **検索 (ESearch)**: `term`, `retmax`, `retstart`, `mindate`, `maxdate`, `sort` を受け取り PMID リスト取得。大量件数は `usehistory=y` + `WebEnv`/`QueryKey` でページング。
