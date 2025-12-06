@@ -20,6 +20,15 @@ artifacts are persisted atomically under a configurable data directory.
    pubmed --help
    ```
 
+   The `[tool.uv]` section of `pyproject.toml` declares the test/lint toolchain as
+   development dependencies, so `uv sync` also prepares the local environment for
+   running checks:
+   ```bash
+   uv run pytest
+   uv run ruff check
+   uv run mypy
+   ```
+
 2. Configure environment variables (see `src/pubmed/config/settings.py` for supported keys).
    At minimum, set your contact email for NCBI:
    ```bash
