@@ -41,5 +41,6 @@ src/pubmed/usecases/__init__.py
 src/pubmed/usecases/download/__init__.py
 src/pubmed/usecases/maintenance/__init__.py
 src/pubmed/usecases/search/__init__.py
+src/pubmed/usecases/search/search_papers.py
 tests/test_cli.py
 tests/test_storage.py
