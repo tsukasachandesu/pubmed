@@ -57,10 +57,11 @@
   - `fixtures/` にテスト用 XML/PDF サンプルを保持。
 
 ## 3. データモデル詳細 (SQLAlchemy)
-**永続化方針**
-- ORM を基本としつつ、バルク/アップサートは Core を併用。セッションは「リクエスト/CLI コマンド単位」で scope し、非同期は `async_sessionmaker` で別管理。トランザクション境界はユースケース層で開始し、リポジトリはセッション注入型にする。
-- Alembic は単一ブランチ運用 + `revision --autogenerate` を必ずレビュー。命名規約 `YYYYMMDD_hhmmss_<summary>`。
-- SQLite/PostgreSQL 両対応。外部キー ON/OFF や `ON DELETE` ポリシーの差異を Alembic スクリプトに明示（基本は RESTRICT、`Download.paper_id` は CASCADE）。
+- **永続化方針**
+  - API から取得したメタデータ/全文 URL/ダウンロード結果は欠落なく全件データベースに保存し、フィルタリングやトリミングは保存後のクエリで行う。
+  - ORM を基本としつつ、バルク/アップサートは Core を併用。セッションは「リクエスト/CLI コマンド単位」で scope し、非同期は `async_sessionmaker` で別管理。トランザクション境界はユースケース層で開始し、リポジトリはセッション注入型にする。
+  - Alembic は単一ブランチ運用 + `revision --autogenerate` を必ずレビュー。命名規約 `YYYYMMDD_hhmmss_<summary>`。
+  - SQLite/PostgreSQL 両対応。外部キー ON/OFF や `ON DELETE` ポリシーの差異を Alembic スクリプトに明示（基本は RESTRICT、`Download.paper_id` は CASCADE）。
 
 **テーブル/制約**
 - `Paper`: `pmid`(PK, uniq), `pmcid`, `doi`, `title`, `abstract`, `journal`, `year`, `volume`, `issue`, `pages`, `url`, `is_oa`, `created_at`, `updated_at` (UTC, `updated_at` は SQLAlchemy イベントで自動更新)。
