@@ -22,17 +22,30 @@ class AppState:
 @app.callback()
 def main(
     ctx: typer.Context,
-    enable_tracing: bool = typer.Option(False, help="Enable tracing backend."),
-    enable_metrics: bool = typer.Option(False, help="Enable metrics backend."),
+    enable_tracing: bool | None = typer.Option(
+        None, is_flag=True, help="Enable tracing backend."
+    ),
+    enable_metrics: bool | None = typer.Option(
+        None, is_flag=True, help="Enable metrics backend."
+    ),
 ) -> None:
     """Initialize shared application state and logging."""
 
     settings = load_settings()
     configure_logging(settings.app)
+
+    observability_settings = settings.observability
+    observability_enabled = observability_settings.enabled
+    tracing_enabled = enable_tracing if enable_tracing is not None else observability_enabled
+    metrics_enabled = enable_metrics if enable_metrics is not None else observability_enabled
+
     init_observability(
         ObservabilityConfig(
-            tracing_enabled=enable_tracing,
-            metrics_enabled=enable_metrics,
+            tracing_enabled=tracing_enabled,
+            metrics_enabled=metrics_enabled,
+            service_name=observability_settings.service_name,
+            exporter_endpoint=observability_settings.otlp_endpoint,
+            sampling_ratio=observability_settings.sampling_ratio,
         )
     )
     ctx.obj = AppState(settings=settings)
